@@ -28,7 +28,7 @@
 
 ```bash
 git clone https://github.com/yourusername/DOT-AE-GAN.git
-cd DOT-AE-GAN/code
+cd DOT-AE-GAN/model_codes
 ```
 1. Run bestmodel_trained_with_fem_onlyref_mua_mus.ipynb for training model.
 2. Use codes insides inference for inferencing. 
