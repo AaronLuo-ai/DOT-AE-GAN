@@ -1,0 +1,107 @@
+% Modified based on rotate_compress_2_Lukai
+% Generate digital phantom with target with different depth, radius and mua
+clear all; close all;
+% Define the range of values
+minValue = -0.05; % minimum value
+maxValue = 0.05; % maximum value
+voxel_size = [5/80, 5/80, 5/80]; % cm
+
+wavelength = [757, 800, 850];
+% epithelium index for each wavelength
+ep = [5, 4, 3];
+% depth of target [voxel]
+depth = (.5:.5:3) ; %/ (5 / 80);
+% radius of the target [voxel]
+radius = (.75:.15:1.2); % / (5 / 80);
+% optical property of the target [cm-1]
+ua = [0.15:0.015:0.21]/10;
+% reduced scattering coefficient [cm-1]
+urs = 12;
+% refractive index
+n = 1.33;
+for iw = 1:length(wavelength)
+    for angle = -1:0.5:1
+        % Load phantom data
+        RefFolder = fullfile(pwd, num2str(wavelength(iw)), num2str(angle), 'ref');
+        filename = fullfile(RefFolder, ['phan', num2str(wavelength(iw)), '_rot_compressed_cut_', num2str(angle), '.mat']);
+        load(filename);
+        phan_rot_compressed_cut_pre_tar = phan_rot_compressed_cut; 
+
+        % The first two layers of the phantom
+        phan_2layers = phan_rot_compressed_cut_pre_tar(:,:,1:2);
+        for id = 1:length(depth)
+            for ir = 1:length(radius)
+                % Load optical properties
+                filename = fullfile(RefFolder, ['optical_prop_', num2str(wavelength(iw)), '_', num2str(angle), '.mat']);
+                load(filename);
+                
+                % % Generate grids of x, y, and z coordinates
+                % [x, y, z] = meshgrid(1:size(phan_rot_compressed_cut, 1), 1:size(phan_rot_compressed_cut, 2), 1:size(phan_rot_compressed_cut, 3));
+                % % Calculate the Euclidean distance from each point to the center of the sphere
+                % distance = sqrt((x - center_x).^2 + (y - center_y).^2 + (z - center_z).^2);
+                % % Create a logical mask based on the distance condition
+                % mask = distance <= scaled_radius;
+
+                phantom_size = size(phan_rot_compressed_cut_pre_tar); 
+
+                % Generate grids of x, y, and z coordinates
+                [x, y, z] = meshgrid(1:phantom_size(1), 1:phantom_size(2), 1:phantom_size(3));
+                
+                % Convert depth and radius to voxel indices
+                depth_index = depth(id) / voxel_size(3);
+                radius_index = radius(ir) / voxel_size(1); % Assuming the same voxel size along all axes
+                
+                % Calculate the Euclidean distance from each point to the center of the sphere
+                distance = sqrt((x - (phantom_size(1)/2)).^2 + (y - (phantom_size(2)/2)).^2 + (z - depth_index).^2);
+                
+                % Create a logical mask based on the distance condition
+                mask = distance <= radius_index;
+       
+
+                %%%%%%%%%%%%
+
+                
+                unmask = 1 - mask; 
+                phan_rot_compressed_cut = phan_rot_compressed_cut_pre_tar.* unmask + mask.*size(optical_prop, 1); 
+
+                % Update the elements of the 3D matrix based on the mask
+                %phan_rot_compressed_cut(mask) = size(optical_prop, 1);
+                phan_rot_compressed_cut(:, :, 1:2) = phan_2layers;
+
+                %phan_rot_compressed_cut = phan_rot_compressed_cut; 
+                for iua = 1:length(ua)
+                    % Load optical properties
+                    filename = fullfile(RefFolder, ['optical_prop_', num2str(wavelength(iw)), '_', num2str(angle), '.mat']);
+                    %optical_prop(:,1) = optical_prop(:,1)/10; 
+                    load(filename);
+                    % Create folder
+                    DataFolder = fullfile(pwd, num2str(wavelength(iw)), num2str(angle), 'tar', ['dep_', num2str(depth(id))], ['rad_', num2str(radius(ir))], ['ua_', num2str(ua(iua))]);
+                    if ~exist(DataFolder, 'dir')
+                        mkdir(DataFolder)
+                    end
+                    % Select optical property for the current sphere
+                    if iw == 2
+                        current_ua = ua(iua);
+                    elseif iw == 1 
+                        % Define the range of values
+                        minValue = -0.02/10; % Minimum value
+                        maxValue = 0.02/10; % Maximum value
+                        
+                        % Generate a random number between minValue and maxValue
+                        random_number = minValue + (maxValue - minValue) * rand; 
+
+                        current_ua = ua(iua) + random_number; 
+                    end
+
+                    % Update optical properties for the current sphere
+                    optical_prop(end + 1, :) = [current_ua, urs / 10, 0, n]; % Assign ua, urs, and n
+                    % Save data
+                    save(fullfile(DataFolder, ['phan', num2str(wavelength(iw)), '_rot_compressed_cut_', num2str(angle), '.mat']), 'phan_rot_compressed_cut');
+                    save(fullfile(DataFolder, ['optical_prop_', num2str(wavelength(iw)), '_', num2str(angle), '.mat']), 'optical_prop');
+                    % Clear optical properties for the next iteration
+                    clear optical_prop;
+                end
+            end
+        end
+    end
+end
