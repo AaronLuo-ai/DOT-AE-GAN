@@ -689,13 +689,16 @@ class Discriminator2(nn.Module):
         
         self.model = nn.Sequential(
             nn.Flatten(),  # Flatten the input
+            # Start of the 1st Block
             nn.Linear(input_size, 4096),  # Fully connected layer
             nn.Dropout(0.5), 
             nn.LeakyReLU(0.2),  # Activation function
             nn.Linear(4096, 2048),
             nn.LeakyReLU(0.2),  # Activation function
             nn.Linear(2048, 2048),
-            nn.LeakyReLU(0.2), # Activation Function 
+            nn.LeakyReLU(0.2), # Activation Function
+            # End of the 1st Block
+            # Start of the 2nd Block
             nn.Linear(2048, 1024),
             nn.Dropout(0.5), 
             nn.LeakyReLU(0.2), # Activation Function 
@@ -703,6 +706,8 @@ class Discriminator2(nn.Module):
             nn.LeakyReLU(0.2),
             nn.Linear(1024, 512),  # Fully connected layer
             nn.LeakyReLU(0.2),  # Activation function
+            # End of the 2nd Block
+            # Start of the 3rd Block
             nn.Linear(512, 512),
             nn.Dropout(0.5),
             nn.LeakyReLU(0.2),
@@ -739,6 +744,3 @@ if __name__ == '__main__':
     dis = Discriminator()
     x = dis(torch.randn(2, 7424))
     print(x.shape)
-
-    
-    

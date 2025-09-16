@@ -68,8 +68,6 @@ def insert_elliptical_sphere(array, depth, a_radius, b_radius, c_radius, mua=1):
                 
     return array
 
-
-
 def get_random_mask(b_tar, mask_ref = 0):
     mask = []
     #batch_size = b_tar.shape[0]
