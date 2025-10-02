@@ -6,3 +6,10 @@
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
+/Data3
+/Data4
+/model_codes/tb_logs
+/model_codes/lightning_logs
+/model_codes/checkpoints
+/SIMULATION_to_PERTURBATION/off_center_output
+/SIMULATION_to_PERTURBATION/output
