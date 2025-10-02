@@ -1,13 +1,14 @@
-from sklearn.metrics import r2_score
 from Models3 import *
-import torch.nn.functional as F
-from Lightening_dataset import *
-import torch.optim as optim
-from pytorch_lightning.loggers import TensorBoardLogger
-logger = TensorBoardLogger("tb_logs", name="my_model_experiment")
+import os
+from sklearn.metrics import r2_score
+import wandb
 import pytorch_lightning as pl
-
 import torch.nn.functional as F
+import torch.optim as optim
+from pytorch_lightning.loggers import WandbLogger
+from Lightening_dataset import *
+from Models3 import *
+
 
 def mse_error(x, x_head, mask):
     # Apply the mask to both ground truth and prediction
@@ -77,22 +78,29 @@ class YourLightningModel(pl.LightningModule):
         opt_inverse, opt_forward, opt_dis = self.optimizers()
 
         pert_label, mask, b_optics, _, Mua_Ground_Truth = batch
+        print("shape of pert_label: ", pert_label.shape)
+        print("shape of mask: ", mask.shape)
+        print("shape of b_optics: ", b_optics.shape)
+        print("shape of Mua_Ground_Truth: ", Mua_Ground_Truth.shape)
 
         # ------------------------------------
         # Training Loop 1: Train Inverse and Forward models (P2P)
         # ------------------------------------
         opt_inverse.zero_grad()
         opt_forward.zero_grad()
+
         Mua_Recons = self.inverse_model(mask, pert_label, b_optics)
         pert_pred = self.forward_model(Mua_Recons, b_optics)
         loss_pert = F.l1_loss(pert_label[:, :18, :], pert_pred)
-        # Use a correctly expanded mask for the loss calculation
-        mask_expanded = mask.unsqueeze(1).expand_as(Mua_Ground_Truth)
+
+        mask_expanded = mask
         loss_recons1 = Weighted_Loss(Mua_Ground_Truth * mask_expanded, Mua_Recons, mask_expanded) * 1.5
         loss_recons = loss_recons1 + loss_pert
+
         self.manual_backward(loss_recons)
         opt_inverse.step()
         opt_forward.step()
+
         self.log('P2P/loss_recons', loss_recons1, on_step=True, on_epoch=True, prog_bar=True)
         self.log('P2P/loss_pert', loss_pert, on_step=True, on_epoch=True, prog_bar=True)
 
@@ -100,28 +108,36 @@ class YourLightningModel(pl.LightningModule):
         # Training Loop 2: Train Discriminator
         # ------------------------------------
         opt_dis.zero_grad()
+
         D_real = self.dis(mask, pert_label, torch.cat(
             [b_optics[:, :2].repeat([1, 20]), Mua_Ground_Truth.amax(dim=[1, 2, 3]).unsqueeze(1).repeat([1, 60])],
             axis=1))
         D_real_loss = self.bce(D_real, torch.ones_like(D_real))
+
         pert_pred_noisy = pert_pred.detach() + torch.randn_like(pert_pred.detach()) * 0.25
         D_fake = self.dis(mask, pert_pred_noisy, torch.cat(
             [b_optics[:, :2].repeat([1, 20]), Mua_Ground_Truth.amax(dim=[1, 2, 3]).unsqueeze(1).repeat([1, 60])],
             axis=1))
         D_fake_loss = self.bce(D_fake, torch.zeros_like(D_fake))
+
         Mua_GT_generated, mask_gen, optics_gen = Generate_Reconstruction_Image_Fast()
-        Mua_GT_generated = Mua_GT_generated.to(self.device)
-        mask_gen = mask_gen.to(self.device)
-        optics_gen = optics_gen.to(self.device)
+
+        # Convert NumPy arrays to PyTorch tensors and move to the device
+        Mua_GT_generated = torch.from_numpy(Mua_GT_generated).to(self.device).float()
+        mask_gen = torch.from_numpy(mask_gen).to(self.device).float()
+        optics_gen = torch.from_numpy(optics_gen).to(self.device).float()
+
         pert_pred2 = self.forward_model(Mua_GT_generated, optics_gen)
         pert_pred2_noisy = pert_pred2.detach() + torch.randn_like(pert_pred2.detach()) * 0.25
         D_fake2 = self.dis(mask_gen, pert_pred2_noisy, torch.cat(
             [optics_gen[:, :2].repeat([1, 20]), Mua_GT_generated.amax(dim=[1, 2, 3]).unsqueeze(1).repeat([1, 60])],
             axis=1))
         D_fake_loss2 = self.bce(D_fake2, torch.zeros_like(D_fake2))
+
         D_loss = (D_fake_loss * 0.2 + D_real_loss + D_fake_loss2) / 3
         self.manual_backward(D_loss)
         opt_dis.step()
+
         self.log('D_loss/total', D_loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log('D_loss/D_fake', D_fake_loss, on_step=True)
         self.log('D_loss/D_fake2', D_fake_loss2, on_step=True)
@@ -132,21 +148,24 @@ class YourLightningModel(pl.LightningModule):
         # ------------------------------------
         opt_inverse.zero_grad()
         opt_forward.zero_grad()
+
         Mua_Recons_r2r = self.inverse_model(mask_gen, pert_pred2, optics_gen)
         D_fake3 = self.dis(mask_gen, pert_pred2, torch.cat(
             [optics_gen[:, :2].repeat(1, 20), Mua_GT_generated.amax(dim=[1, 2, 3]).unsqueeze(1).repeat([1, 60])],
             axis=1))
         G_fake_loss = self.bce(D_fake3, torch.ones_like(D_fake3))
-        mask_gen_expanded = mask_gen.unsqueeze(1).expand_as(Mua_GT_generated)
+
+        mask_gen_expanded = mask_gen
         loss_recons3 = Weighted_Loss(Mua_GT_generated * mask_gen_expanded, Mua_Recons_r2r, mask_gen_expanded) * 1.5
         loss_recons5 = loss_recons3 + G_fake_loss * 0.001
+
         self.manual_backward(loss_recons5)
         opt_inverse.step()
         opt_forward.step()
+
         self.log('R2R/loss_recons', loss_recons3, on_step=True, on_epoch=True)
         self.log('R2R/G_fake_loss', G_fake_loss, on_step=True, on_epoch=True)
 
-        # Append outputs for on_training_epoch_end
         self.training_step_outputs.append({'loss_recons': loss_recons, 'D_loss': D_loss, 'loss_recons5': loss_recons5})
 
     def on_training_epoch_end(self):
@@ -175,15 +194,26 @@ class YourLightningModel(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         pert_label, mask, b_optics, _, Mua_Ground_Truth = batch
         Mua_Recons = self.inverse_model(mask, pert_label, b_optics)
-        print()
-        # Expand mask to match Mua_Ground_Truth shape
-        mask_expanded = mask.unsqueeze(1).expand_as(Mua_Ground_Truth)
+
+        print("shape of Mua_Recons", Mua_Recons.shape)
+        print("shape of Mua_Ground_Truth", Mua_Ground_Truth.shape)
+        print("shape of pert_label", pert_label.shape)
+        print("shape of b_optics", b_optics.shape)
+        print("shape of mask", mask.shape)
+
+        mask_expanded = mask
+
         mse, gt, pred = mse_error(Mua_Ground_Truth, Mua_Recons, mask_expanded)
 
         self.log('val_mse', mse, on_step=False, on_epoch=True, prog_bar=True)
 
-        # Append outputs for on_validation_epoch_end
-        output = {'gt': gt, 'pred': pred, 'Mua_Ground_Truth': Mua_Ground_Truth, 'Mua_Recons': Mua_Recons, 'mask': mask}
+        output = {
+            'gt': torch.tensor(gt).unsqueeze(0),
+            'pred': torch.tensor(pred).unsqueeze(0),
+            'Mua_Ground_Truth': Mua_Ground_Truth.detach().cpu(),
+            'Mua_Recons': Mua_Recons.detach().cpu(),
+            'mask': mask.detach().cpu() 
+        }
         self.validation_step_outputs.append(output)
 
         return output
@@ -191,8 +221,9 @@ class YourLightningModel(pl.LightningModule):
     def on_validation_epoch_end(self):
         outputs = self.validation_step_outputs
 
-        # Check if outputs list is empty to prevent errors during sanity check
+        # Avoid errors during sanity check
         if not outputs:
+            self.validation_step_outputs.clear()
             return
 
         gt_max = torch.cat([x['gt'] for x in outputs])
@@ -200,44 +231,80 @@ class YourLightningModel(pl.LightningModule):
         r2 = r2_score(gt_max.cpu().numpy(), pred_max.cpu().numpy())
         self.log('val_r2_score', r2, on_epoch=True, prog_bar=True)
 
-        # Plotting the first 5 images
-        if self.current_epoch % 3 == 0:
+        # Plotting the first 5 images and logging to W&B
+        if self.current_epoch % 5 == 0:
             first_batch_outputs = outputs[0]
             Mua_Ground_Truth_val = first_batch_outputs['Mua_Ground_Truth']
             Mua_Recons_val = first_batch_outputs['Mua_Recons']
             mask_val = first_batch_outputs['mask']
 
-            for i in range(min(5, Mua_Ground_Truth_val.shape[0])):
+            wandb_images = []
+            num_show = min(5, Mua_Ground_Truth_val.shape[0])
+
+            for i in range(num_show):
                 fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
+                # -------- Ground Truth ----------
                 ax = axes[0]
-                img_gt = show_tensor_image2(Mua_Ground_Truth_val[i])
+                t = Mua_Ground_Truth_val[i]
+                t = t.detach().cpu() if t.is_cuda else t.detach()
+                img_gt = t.numpy()
+                if img_gt.ndim == 3:
+                    if img_gt.shape[0] > 1:
+                        img_gt = img_gt.mean(axis=0)
+                    else:
+                        img_gt = img_gt[0]
+                img_gt = img_gt.astype('float32')
                 ax.imshow(img_gt, cmap='viridis')
                 ax.set_title('Ground Truth')
+                ax.axis('off')
 
+                # -------- Reconstructed Image ----------
                 ax = axes[1]
-                img_recons = show_tensor_image2(Mua_Recons_val[i])
+                t = Mua_Recons_val[i]
+                t = t.detach().cpu() if t.is_cuda else t.detach()
+                img_recons = t.numpy()
+                if img_recons.ndim == 3:
+                    if img_recons.shape[0] > 1:
+                        img_recons = img_recons.mean(axis=0)
+                    else:
+                        img_recons = img_recons[0]
+                img_recons = img_recons.astype('float32')
                 ax.imshow(img_recons, cmap='viridis')
                 ax.set_title('Reconstructed Image')
+                ax.axis('off')
 
+                # -------- Mask ----------
                 ax = axes[2]
-                img_mask = show_tensor_image2(mask_val[i])
+                t = mask_val[i]
+                t = t.detach().cpu() if t.is_cuda else t.detach()
+                img_mask = t.numpy()
+                if img_mask.ndim == 3:
+                    if img_mask.shape[0] > 1:
+                        img_mask = img_mask.mean(axis=0)
+                    else:
+                        img_mask = img_mask[0]
+                img_mask = img_mask.astype('float32')
                 ax.imshow(img_mask, cmap='gray')
                 ax.set_title('Mask')
+                ax.axis('off')
 
                 plt.suptitle(f'Epoch {self.current_epoch} - Validation Image {i + 1}')
 
-                # Add the figure to TensorBoard
-                self.logger.experiment.add_figure(f"Validation_Epoch_{self.current_epoch}/Image_{i + 1}", fig,
-                                                  self.current_epoch)
+                wandb_images.append(wandb.Image(fig, caption=f"Epoch {self.current_epoch}, Sample {i + 1}"))
                 plt.close(fig)
+
+            if wandb_images:
+                self.logger.experiment.log({"validation_images": wandb_images})
 
         # Clear the list after the epoch ends
         self.validation_step_outputs.clear()
 
-if __name__ == '__main__':
 
-    BATCH_SIZE = 6
+if __name__ == '__main__':
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
+    BATCH_SIZE = 16
 
     train_dataset = MyDataset(
         X_train, y_train, Mask_train, optics_train, target_train, train=True
@@ -252,12 +319,14 @@ if __name__ == '__main__':
 
     test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-    # Instantiate the data module and model
     model = YourLightningModel()
+    wandb_logger = WandbLogger(project="my-dot-ae-gan", log_model="all")
+
+    # Pass the logger to the PyTorch Lightning Trainer
     trainer = pl.Trainer(
-        max_epochs=100,
-        logger=logger,  # Pass the logger here
-        accelerator="auto"  # use "gpu" if you want to specify a device
+        max_epochs=300,
+        logger=wandb_logger,
+        accelerator="auto"
     )
 
     trainer.fit(model, train_dataloader, test_dataloader)

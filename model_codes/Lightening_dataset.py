@@ -14,33 +14,34 @@ from sklearn.model_selection import train_test_split
 
 depth = [0.5, 1.0, 1.5, 2.0, 2.5, 3, 3.5]
 
-def show_tensor_image2(img, title=""):
-    """
-    Visualizes a 3D or 4D tensor as a series of 2D slices.
-    """
-    img = img.detach().to('cpu').numpy()
-    num_slices = 7
-    slice_positions = np.linspace(0, 6, num_slices, dtype=int)
+import torch
+
+
+def show_tensor_image2(img, depth=None):
+    img = img.detach().cpu().numpy()
+    img = np.squeeze(img)   # remove singleton dims
+
+    # img can now be [7,H,W] or [H,W]
+    if img.ndim == 2:
+        img = img[None, ...]   # promote to [1,H,W]
+
+    num_slices = img.shape[0]
+    slice_positions = np.arange(num_slices)
 
     # Create subplots
     fig, axes = plt.subplots(1, num_slices, figsize=(15, 5))
-    if title:
-        fig.suptitle(title, fontsize=16)
 
     # Plot slices
     for i, pos in enumerate(slice_positions):
-        if img.ndim == 4:
-            # Handle case with batch dimension
-            slice_data = img[0, pos, :, :].squeeze()
-        elif img.ndim == 3:
-            # Handle 3D tensor (no batch dimension)
-            slice_data = img[pos, :, :].squeeze()
-        else:
-            # Handle 2D tensor
-            slice_data = img.squeeze()
+        slice_data = img[pos, :, :]
 
         im = axes[i].imshow(slice_data, vmin=0, vmax=0.32, cmap='jet')
-        axes[i].set_title(f"Depth {depth[pos]} cm")
+
+        if depth is not None and len(depth) == num_slices:
+            axes[i].set_title(f"Depth {depth[pos]} cm")
+        else:
+            axes[i].set_title(f"Slice {pos}")
+
         axes[i].axis('off')
 
     cbar = fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.6)
@@ -299,7 +300,11 @@ class MyDataset(Dataset):
 
 
 def main():
-    BATCH_SIZE = 6
+    print(torch.cuda.memory_summary())
+
+    # Optionally, specify a device and enable abbreviated output
+    print(torch.cuda.memory_summary(device=torch.device('cuda:0'), abbreviated=True))
+    BATCH_SIZE = 16
 
     train_dataset = MyDataset(
         X_train, y_train, Mask_train, optics_train, target_train, train=True
@@ -316,7 +321,7 @@ def main():
 
     # Store all batches in a list
     all_batches = []
-    for batch in train_dataloader:
+    for batch in test_dataloader:
         all_batches.append(batch)
 
     # Get the second-to-last batch using list indexing
@@ -337,19 +342,7 @@ def main():
     for i in range(min(5, y_data.shape[0])):
         mask = mask_data[i]
         image = y_data[i]
-
-        print("shape", image.shape)
-        print("mask", mask.shape)
-        show_tensor_image2(image)
-        show_tensor_image2(mask)
-
-    (x_data, mask_data, optics_data, target_data, y_data) = second_to_last_batch
-
-
-    for i in range(min(5, y_data.shape[0])):
-        mask = mask_data[i]
-        image = y_data[i]
-
+        print("i = ", i)
         print("shape", image.shape)
         print("mask", mask.shape)
         show_tensor_image2(image)

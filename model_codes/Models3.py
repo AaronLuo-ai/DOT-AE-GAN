@@ -673,10 +673,11 @@ class Discriminator(nn.Module):
             #nn.Sigmoid()  # Sigmoid activation for binary classification
         )
 
-    def forward(self, x1, x2= None, x3 = None):
-        x = torch.cat([x1.view(16, -1), x2.view(16, -1), x3.view(16, -1)], dim = -1)
+    def forward(self, x1, x2=None, x3=None):
+        batch_size = x1.size(0)
+        x = torch.cat([x1.view(batch_size, -1), x2.view(batch_size, -1), x3.view(batch_size, -1)], dim=-1)
         x = self.model(x)
-        return x 
+        return x
     
     ### Forward function ends here 
 class Discriminator2(nn.Module):
